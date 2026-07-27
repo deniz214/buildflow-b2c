@@ -130,8 +130,20 @@ export default function B2CDialer() {
   const optPot = [];
   for (const l of visible) {
     if (l.stage === "Opt-In" && !reached(l, "b2copt")) {
-      const s = dueSlot(l, l.opt_in_at, "b2copt");
-      if (s) optPot.push({ l, s });
+      // Brand-new opt-in: show a "call now" card immediately on arrival,
+      // regardless of the clock, until it's been called once.
+      const calls = l.setter_calls || {};
+      if (!calls["b2copt|arrival"]) {
+        optPot.push({ l, s: { key: "b2copt|arrival", label: "arrival", stage: "NEW OPT-IN · call now", sast: sastTime(new Date()), fresh: true } });
+      } else {
+        const s = dueSlot(l, l.opt_in_at, "b2copt");
+        if (s) optPot.push({ l, s });
+        else if (!TZ_ORDER.includes(l.timezone)) {
+          // No usable timezone -> can't schedule slots. Keep it visible rather
+          // than silently dropping it, so it never gets lost.
+          optPot.push({ l, s: { key: `b2copt|notz|${dayKey(nowPartsIn(SAST))}`, label: "no timezone", stage: "⚠ No timezone — call when you can", sast: sastTime(new Date()), fresh: true } });
+        }
+      }
     } else if (l.stage === "No Show" && !reached(l, "b2cns")) {
       const iana = TZ_IANA[l.timezone];
       if (iana) {
@@ -149,6 +161,11 @@ export default function B2CDialer() {
     if (l.stage !== "Booked" || reached(l, "b2cconf")) continue;
     const m = minsToAppt(l);
     if (m == null || m <= 0) continue;
+    const calls = l.setter_calls || {};
+    if (!calls["b2cconf|arrival"]) {
+      confPot.push({ l, s: { key: "b2cconf|arrival", label: "arrival", stage: "NEW BOOKING · confirm now", sast: sastTime(new Date()), fresh: true } });
+      continue;
+    }
     const s = dueSlot(l, l.booked_at || l.opt_in_at, "b2cconf");
     if (s) confPot.push({ l, s });
   }
@@ -209,7 +226,7 @@ export default function B2CDialer() {
 function PotCard({ l, s, record, conf, setStage }) {
   const ghl = ghlLink(l);
   return (
-    <details style={{ background: C.panel, border: `1px solid ${C.amber}44`, borderRadius: 12 }}>
+    <details style={{ background: C.panel, border: `1px solid ${s.fresh ? C.green + "88" : C.amber + "44"}`, borderRadius: 12 }}>
       <summary style={{ listStyle: "none", cursor: "pointer", padding: "12px 15px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
           <span style={{ fontWeight: 700, fontSize: 14 }}>{l.full_name || "—"}</span>
@@ -217,8 +234,8 @@ function PotCard({ l, s, record, conf, setStage }) {
           <span style={{ fontSize: 11, color: C.violet }}>{l.timezone || "?"}</span>
         </span>
         <span style={{ textAlign: "right" }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: C.amber }}>{s.stage}</span>
-          <span style={{ fontSize: 11, color: C.faint, marginLeft: 8 }}>= {s.sast} SAST</span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: s.fresh ? C.green : C.amber }}>{s.stage}</span>
+          <span style={{ fontSize: 11, color: C.faint, marginLeft: 8 }}>{s.fresh ? "just now" : `= ${s.sast} SAST`}</span>
         </span>
       </summary>
       <div style={{ padding: "0 15px 13px", borderTop: `1px solid ${C.border}` }}>
