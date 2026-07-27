@@ -67,6 +67,9 @@ function reached(lead, prefix) {
   return Object.entries(c).some(([k, v]) => v === "picked_up" && k.startsWith(prefix));
 }
 // The FRESHEST due, unhandled slot today for this lead — or null.
+// Slots that were already in the past when the last call was logged are
+// skipped, so ticking "no answer" moves the lead to the NEXT calling time
+// rather than instantly resurfacing an earlier slot.
 function dueSlot(lead, baseIso, prefix) {
   const iana = TZ_IANA[lead.timezone];
   if (!iana || !baseIso) return null;
@@ -75,14 +78,15 @@ function dueSlot(lead, baseIso, prefix) {
   const idx = dayDiff(base, nowP);
   if (idx < 0) return null;
   const calls = lead.setter_calls || {};
+  const lastCall = Date.parse(calls[`${prefix}|last`] || "") || 0;
   const nowMin = nowP.hh * 60 + nowP.mm;
   let current = null;
   for (const [hh, label] of timesForDay(idx)) {
     const key = `${prefix}|${dayKey(nowP)}|${pad(hh)}00`;
-    if (hh * 60 <= nowMin && !calls[key]) {
-      const dueUTC = zonedWallToUTC(nowP.y, nowP.m, nowP.d, hh, 0, iana);
-      current = { key, label, stage: `Day ${idx + 1} · ${label} call`, sast: sastTime(dueUTC) };
-    }
+    if (hh * 60 > nowMin || calls[key]) continue;
+    const dueUTC = zonedWallToUTC(nowP.y, nowP.m, nowP.d, hh, 0, iana);
+    if (dueUTC.getTime() <= lastCall) continue; // already covered by that call
+    current = { key, label, stage: `Day ${idx + 1} · ${label} call`, sast: sastTime(dueUTC) };
   }
   return current;
 }
@@ -117,7 +121,8 @@ export default function B2CDialer() {
   const visible = client === "All" ? leads : leads.filter((l) => l.client === client);
 
   async function record(lead, slotKey, outcome) {
-    const calls = { ...(lead.setter_calls || {}), [slotKey]: outcome };
+    const prefix = String(slotKey).split("|")[0];
+    const calls = { ...(lead.setter_calls || {}), [slotKey]: outcome, [`${prefix}|last`]: new Date().toISOString() };
     await supabase.from("b2c_leads").update({ setter_calls: calls }).eq("id", lead.id);
     load();
   }
