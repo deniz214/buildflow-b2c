@@ -26,6 +26,16 @@ const TZ_ORDER = ["ET", "CT", "MT", "PT"];
 const TZ_IANA = { ET: "America/New_York", CT: "America/Chicago", MT: "America/Denver", PT: "America/Los_Angeles" };
 const SAST = "Africa/Johannesburg";
 
+const AREA_TZ = {"201":"ET","202":"ET","203":"ET","204":"CT","205":"CT","206":"PT","207":"ET","208":"MT","209":"PT","210":"CT","212":"ET","213":"PT","214":"CT","215":"ET","216":"ET","217":"CT","218":"CT","219":"ET","220":"ET","223":"ET","224":"CT","225":"CT","226":"ET","227":"ET","228":"CT","229":"ET","231":"ET","234":"ET","235":"CT","236":"PT","239":"ET","240":"ET","248":"ET","249":"ET","250":"PT","251":"CT","252":"ET","253":"PT","254":"CT","256":"CT","257":"PT","260":"ET","262":"CT","263":"ET","267":"ET","269":"ET","270":"ET","272":"ET","276":"ET","279":"PT","281":"CT","283":"ET","289":"ET","301":"ET","302":"ET","303":"MT","304":"ET","305":"ET","307":"MT","308":"CT","309":"CT","310":"PT","312":"CT","313":"ET","314":"CT","315":"ET","316":"CT","317":"ET","318":"CT","319":"CT","320":"CT","321":"ET","323":"PT","324":"ET","325":"CT","326":"ET","327":"CT","329":"ET","330":"ET","331":"CT","332":"ET","334":"CT","336":"ET","337":"CT","339":"ET","341":"PT","343":"ET","346":"CT","347":"ET","350":"PT","351":"ET","352":"ET","353":"CT","354":"ET","360":"PT","361":"CT","363":"ET","364":"ET","365":"ET","367":"ET","368":"MT","369":"PT","380":"ET","382":"ET","385":"MT","386":"ET","401":"ET","402":"CT","403":"MT","404":"ET","405":"CT","406":"MT","407":"ET","408":"PT","409":"CT","410":"ET","412":"ET","413":"ET","414":"CT","415":"PT","416":"ET","417":"CT","418":"ET","419":"ET","423":"CT","424":"PT","425":"PT","430":"CT","431":"CT","432":"CT","434":"ET","435":"MT","437":"ET","438":"ET","440":"ET","442":"PT","443":"ET","445":"ET","447":"CT","448":"ET","450":"ET","458":"PT","463":"ET","464":"CT","468":"ET","469":"CT","470":"ET","474":"CT","475":"ET","478":"ET","479":"CT","480":"MT","484":"ET","500":"AKT","501":"CT","502":"ET","503":"PT","504":"CT","505":"MT","507":"CT","508":"ET","509":"PT","510":"PT","512":"CT","513":"ET","514":"ET","515":"CT","516":"ET","517":"ET","518":"ET","519":"ET","520":"MT","521":"AKT","522":"AKT","525":"AKT","526":"AKT","527":"AKT","528":"AKT","529":"AKT","530":"PT","531":"CT","532":"AKT","533":"AKT","534":"CT","539":"CT","540":"ET","541":"PT","544":"AKT","548":"ET","551":"ET","557":"CT","559":"PT","561":"ET","562":"PT","563":"CT","564":"PT","566":"AKT","567":"ET","570":"ET","571":"ET","572":"CT","573":"CT","574":"ET","575":"MT","577":"AKT","579":"ET","580":"CT","581":"ET","582":"ET","584":"CT","585":"ET","586":"ET","587":"MT","588":"AKT","600":"AKT","601":"CT","602":"MT","603":"ET","604":"PT","605":"MT","606":"ET","607":"ET","608":"CT","609":"ET","610":"ET","612":"CT","613":"ET","614":"ET","615":"CT","616":"ET","617":"ET","618":"CT","619":"PT","620":"CT","622":"AKT","623":"MT","626":"PT","628":"PT","629":"CT","630":"CT","631":"ET","633":"AKT","636":"CT","640":"ET","641":"CT","645":"ET","646":"ET","647":"ET","650":"PT","651":"CT","656":"ET","657":"PT","659":"CT","660":"CT","661":"PT","662":"CT","667":"ET","669":"PT","672":"PT","678":"ET","680":"ET","681":"ET","682":"CT","683":"ET","686":"ET","689":"CT","701":"MT","702":"PT","703":"ET","704":"ET","705":"ET","706":"ET","707":"PT","708":"CT","712":"CT","713":"CT","714":"PT","715":"CT","716":"ET","717":"ET","718":"ET","719":"MT","720":"MT","724":"ET","725":"PT","726":"CT","727":"ET","728":"ET","730":"CT","731":"CT","732":"ET","734":"ET","737":"CT","738":"PT","740":"ET","742":"ET","743":"ET","747":"PT","748":"MT","753":"ET","754":"ET","757":"ET","760":"PT","762":"ET","763":"CT","765":"ET","769":"CT","770":"ET","771":"ET","772":"ET","773":"CT","774":"ET","775":"MT","778":"PT","779":"CT","780":"MT","781":"ET","785":"CT","786":"ET","800":"AKT","801":"MT","802":"ET","803":"ET","804":"ET","805":"PT","806":"CT","807":"ET","808":"HAT","810":"ET","812":"ET","813":"ET","814":"ET","815":"CT","816":"CT","817":"CT","818":"PT","819":"ET","820":"PT","821":"ET","825":"MT","826":"ET","828":"ET","830":"CT","831":"PT","832":"CT","833":"AKT","835":"ET","838":"ET","839":"ET","840":"PT","843":"ET","844":"AKT","845":"ET","847":"CT","848":"ET","850":"ET","854":"ET","855":"AKT","856":"ET","857":"ET","858":"PT","859":"ET","860":"ET","862":"ET","863":"ET","864":"ET","865":"ET","866":"AKT","870":"CT","872":"CT","873":"ET","876":"AKT","877":"AKT","878":"ET","888":"AKT","900":"AKT","901":"CT","903":"CT","904":"ET","905":"ET","906":"ET","907":"AKT","908":"ET","909":"PT","910":"ET","912":"ET","913":"CT","914":"ET","915":"MT","916":"PT","917":"ET","918":"CT","919":"ET","920":"CT","925":"PT","928":"MT","929":"ET","930":"ET","931":"CT","934":"ET","936":"CT","937":"ET","938":"CT","940":"CT","941":"ET","942":"ET","943":"ET","945":"CT","947":"ET","948":"ET","949":"PT","951":"PT","952":"CT","954":"ET","956":"CT","959":"ET","970":"MT","971":"PT","972":"CT","973":"ET","975":"CT","978":"ET","979":"CT","980":"ET","984":"ET","985":"CT","986":"MT","989":"ET"};
+function tzFromPhone(phone) {
+  if (!phone) return "";
+  let t = String(phone).trim().replace(/^\+1/, "").replace(/^\+/, "");
+  const d = t.replace(/\D/g, "");
+  const core = d.length === 11 && d[0] === "1" ? d.slice(1) : d;
+  const ac = core.slice(0, 3);
+  return ac && AREA_TZ[ac] ? AREA_TZ[ac] : "";
+}
+
 /* ---- time helpers ---- */
 const pad = (n) => String(n).padStart(2, "0");
 function nowPartsIn(iana) {
@@ -107,10 +117,14 @@ export default function B2CDialer() {
   const [section, setSection] = useState("optins");
   const [client, setClient] = useState("All");
   const [, setTick] = useState(0);
+  const [err, setErr] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [draft, setDraft] = useState({ client: "", full_name: "", phone: "", email: "", stage: "Opt-In", appt_at: "" });
 
   async function load() {
     setLoading(true);
-    const { data } = await supabase.from("b2c_leads").select("*").in("stage", ["Opt-In", "Booked", "No Show"]);
+    const { data, error } = await supabase.from("b2c_leads").select("*").in("stage", ["Opt-In", "Booked", "No Show"]);
+    setErr(error ? (error.message || String(error)) : null);
     setLeads(data || []);
     setLoading(false);
   }
@@ -129,6 +143,21 @@ export default function B2CDialer() {
   async function setStage(lead, stage) {
     await supabase.from("b2c_leads").update({ stage }).eq("id", lead.id);
     load();
+  }
+
+  async function addLead() {
+    if (!draft.phone && !draft.email) { window.alert("Need at least a phone or an email."); return; }
+    const row = {
+      client: draft.client || null, full_name: draft.full_name || null,
+      phone: draft.phone || null, email: draft.email || null,
+      timezone: tzFromPhone(draft.phone) || null,
+      stage: draft.stage, opt_in_at: new Date().toISOString(),
+    };
+    if (draft.stage === "Booked") { row.booked_at = new Date().toISOString(); row.appt_at = draft.appt_at || null; }
+    const { error } = await supabase.from("b2c_leads").insert(row);
+    if (error) { window.alert("Could not add lead: " + error.message); return; }
+    setDraft({ client: "", full_name: "", phone: "", email: "", stage: "Opt-In", appt_at: "" });
+    setShowAdd(false); load();
   }
 
   // build the pots — only leads DUE right now
@@ -194,16 +223,50 @@ export default function B2CDialer() {
         <div>
           <h1 style={{ fontSize: 26, fontWeight: 600, margin: 0 }}>B2C Dialer</h1>
           <p style={{ color: C.dim, marginTop: 6, marginBottom: 0, fontSize: 13.5 }}>
-            Only leads due for a call show here. It's <b>{sastTime(new Date())} SAST</b> now.
+            Only leads due for a call show here. It's <b>{sastTime(new Date())} SAST</b> now. · {leads.length} leads loaded
           </p>
           <p style={{ color: C.faint, marginTop: 4, marginBottom: 0, fontSize: 11.5 }}>
             Appropriate times to call, in SAST: {legend.join(" · ")}
           </p>
         </div>
-        <select value={client} onChange={(e) => setClient(e.target.value)} style={sel}>
-          {clients.map((c) => <option key={c} value={c}>{c === "All" ? "All clients" : c}</option>)}
-        </select>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <select value={client} onChange={(e) => setClient(e.target.value)} style={sel}>
+            {clients.map((c) => <option key={c} value={c}>{c === "All" ? "All clients" : c}</option>)}
+          </select>
+          <button onClick={() => setShowAdd((v) => !v)} style={{ ...sel, cursor: "pointer", background: showAdd ? C.accent : C.panel, color: showAdd ? "#fff" : C.text }}>+ Add lead</button>
+        </div>
       </div>
+
+      {err && (
+        <div style={{ marginTop: 14, padding: "11px 15px", borderRadius: 10, background: "#3a1d22", border: `1px solid ${C.red}`, color: C.red, fontSize: 13 }}>
+          ⚠ Can't read leads from the database: {err} — run 30_b2c_access.sql in Supabase.
+        </div>
+      )}
+
+      {showAdd && (
+        <div style={{ marginTop: 14, background: C.panel, border: `1px solid ${C.border}`, borderRadius: 12, padding: 15, maxWidth: 680 }}>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>Add a lead manually</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <input placeholder="Client" value={draft.client} onChange={(e) => setDraft({ ...draft, client: e.target.value })} style={inp} />
+            <input placeholder="Full name" value={draft.full_name} onChange={(e) => setDraft({ ...draft, full_name: e.target.value })} style={inp} />
+            <input placeholder="Phone (US)" value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} style={inp} />
+            <input placeholder="Email" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} style={inp} />
+            <select value={draft.stage} onChange={(e) => setDraft({ ...draft, stage: e.target.value })} style={inp}>
+              {["Opt-In", "Booked", "No Show"].map((st) => <option key={st} value={st}>{st}</option>)}
+            </select>
+            {draft.stage === "Booked" && (
+              <input type="datetime-local" value={draft.appt_at} onChange={(e) => setDraft({ ...draft, appt_at: e.target.value })} style={{ ...inp, colorScheme: "dark" }} title="Appointment time (lead's local time)" />
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <button onClick={addLead} style={{ ...sel, cursor: "pointer", background: C.green, color: "#0f1115", fontWeight: 700, border: "none" }}>Save lead</button>
+            <button onClick={() => setShowAdd(false)} style={{ ...sel, cursor: "pointer" }}>Cancel</button>
+          </div>
+          <div style={{ fontSize: 11, color: C.faint, marginTop: 8 }}>
+            Timezone comes from the phone's area code. Reminders start automatically: Opt-In leads show as "call now" and follow the daily cadence; Booked leads enter confirmations + 30-min prior.
+          </div>
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
         <SectionBtn on={section === "optins"} onClick={() => setSection("optins")} label={`Opt-Ins (${optPot.length})`} />
@@ -310,4 +373,5 @@ const btn = (tone) => ({
   padding: "7px 12px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", cursor: "pointer",
   background: "transparent", color: tone, border: `1px solid ${tone}66`,
 });
+const inp = { padding: "9px 11px", borderRadius: 9, border: `1px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 13, fontFamily: "inherit", boxSizing: "border-box", width: "100%" };
 const sel = { padding: "8px 12px", borderRadius: 9, border: `1px solid ${C.border}`, background: C.panel, color: C.text, fontSize: 13.5, fontFamily: "inherit" };
