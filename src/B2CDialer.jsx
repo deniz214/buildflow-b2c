@@ -144,6 +144,14 @@ export default function B2CDialer() {
     await supabase.from("b2c_leads").update({ stage }).eq("id", lead.id);
     load();
   }
+  async function bookLead(lead, wall) {
+    if (!wall) { window.alert("Pick the appointment time first."); return; }
+    const { error } = await supabase.from("b2c_leads").update({
+      stage: "Booked", booked_at: new Date().toISOString(), appt_at: wall,
+    }).eq("id", lead.id);
+    if (error) { window.alert("Could not book: " + error.message); return; }
+    load();
+  }
 
   async function addLead() {
     if (!draft.phone && !draft.email) { window.alert("Need at least a phone or an email."); return; }
@@ -277,7 +285,7 @@ export default function B2CDialer() {
       {loading ? <p style={{ color: C.dim, marginTop: 20 }}>Loading…</p> : (
         <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 10, maxWidth: 680 }}>
           {section === "optins" && (optPot.length
-            ? optPot.map(({ l, s }) => <PotCard key={l.id} l={l} s={s} record={record} />)
+            ? optPot.map(({ l, s }) => <PotCard key={l.id} l={l} s={s} record={record} book={bookLead} />)
             : <Empty>No opt-in calls due right now. 🎉</Empty>)}
           {section === "conf" && (confPot.length
             ? confPot.map(({ l, s }) => <PotCard key={l.id} l={l} s={s} record={record} conf setStage={setStage} />)
@@ -291,8 +299,10 @@ export default function B2CDialer() {
   );
 }
 
-function PotCard({ l, s, record, conf, setStage }) {
+function PotCard({ l, s, record, conf, setStage, book }) {
   const ghl = ghlLink(l);
+  const [booking, setBooking] = useState(false);
+  const [apptVal, setApptVal] = useState("");
   return (
     <details style={{ background: C.panel, border: `1px solid ${s.fresh ? C.green + "88" : C.amber + "44"}`, borderRadius: 12 }}>
       <summary style={{ listStyle: "none", cursor: "pointer", padding: "12px 15px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -321,9 +331,21 @@ function PotCard({ l, s, record, conf, setStage }) {
           {ghl && <><span style={{ color: C.dim }}>GHL</span>
             <span><a href={ghl} target="_blank" rel="noreferrer" style={{ color: C.accent }}>Open contact ↗</a></span></>}
         </div>
-        <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
           <button style={btn(C.green)} onClick={() => record(l, s.key, "picked_up")}>✓ Called — picked up</button>
           <button style={btn(C.faint)} onClick={() => record(l, s.key, "no_pickup")}>☎ Called — no answer</button>
+          {book && !booking && (
+            <button style={btn(C.violet)} onClick={() => setBooking(true)}>📅 Book appointment</button>
+          )}
+          {book && booking && (
+            <>
+              <input type="datetime-local" value={apptVal} onChange={(e) => setApptVal(e.target.value)}
+                title="Appointment time in the LEAD'S local time"
+                style={{ padding: "6px 9px", borderRadius: 8, border: `1px solid ${C.violet}66`, background: C.bg, color: C.text, fontSize: 12, fontFamily: "inherit", colorScheme: "dark" }} />
+              <button style={btn(C.violet)} onClick={() => book(l, apptVal)}>Save booking</button>
+              <button style={btn(C.faint)} onClick={() => { setBooking(false); setApptVal(""); }}>Cancel</button>
+            </>
+          )}
           {conf && (
             <>
               <button style={btn(C.accent)} onClick={() => setStage(l, "Show")}>Show</button>
