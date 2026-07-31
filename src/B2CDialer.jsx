@@ -45,6 +45,70 @@ const STATE_TZ = {
   AK:"America/Anchorage", HI:"Pacific/Honolulu",
 };
 const mLeadTz = (st) => STATE_TZ[st] || "America/New_York";
+
+// Master-lead call cadence — same rules as b2c-cron.js and the old pots.
+// Keys match the cron's keys exactly, so ticking a call here stops that
+// lead's Slack reminder (and vice versa).
+function mNowParts(iana) {
+  const f = new Intl.DateTimeFormat("en-US", { timeZone: iana, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const o = {};
+  for (const p of f.formatToParts(new Date())) if (p.type !== "literal") o[p.type] = p.value;
+  let hh = parseInt(o.hour, 10); if (hh === 24) hh = 0;
+  return { y: +o.year, m: +o.month, d: +o.day, hh, mm: +o.minute };
+}
+function mDateParts(iso, iana) {
+  const f = new Intl.DateTimeFormat("en-CA", { timeZone: iana, year: "numeric", month: "2-digit", day: "2-digit" });
+  const [y, m, d] = f.format(new Date(iso)).split("-").map(Number);
+  return { y, m, d };
+}
+const mDayKey = (p) => `${p.y}-${pad(p.m)}-${pad(p.d)}`;
+const mDayDiff = (a, b) => Math.round((Date.UTC(b.y, b.m - 1, b.d) - Date.UTC(a.y, a.m - 1, a.d)) / 86400e3);
+const mReached = (l, prefix) =>
+  Object.entries(l.setter_calls || {}).some(([k, v]) => v === "picked_up" && k.startsWith(prefix));
+
+// The freshest DUE, untouched slot today — or null.
+function mDueSlot(lead, baseIso, prefix) {
+  const iana = mLeadTz(lead.state);
+  if (!baseIso) return null;
+  const nowP = mNowParts(iana);
+  const idx = mDayDiff(mDateParts(baseIso, iana), nowP);
+  if (idx < 0) return null;
+  const calls = lead.setter_calls || {};
+  const nowMin = nowP.hh * 60 + nowP.mm;
+  let current = null;
+  for (const [hh, label] of timesForDay(idx)) {
+    const key = `${prefix}|${mDayKey(nowP)}|${pad(hh)}00`;
+    if (hh * 60 > nowMin || calls[key]) continue;
+    const dueUTC = zonedWallToUTC(nowP.y, nowP.m, nowP.d, hh, 0, iana);
+    current = { key, label, stage: `Day ${idx + 1} · ${label} call`, sast: sastTime(dueUTC), due: dueUTC };
+  }
+  return current;
+}
+// The next slot still ahead today (for "next: …" on non-due cards).
+function mNextSlot(lead, baseIso) {
+  const iana = mLeadTz(lead.state);
+  if (!baseIso) return null;
+  const nowP = mNowParts(iana);
+  const idx = mDayDiff(mDateParts(baseIso, iana), nowP);
+  if (idx < 0) return null;
+  const nowMin = nowP.hh * 60 + nowP.mm;
+  for (const [hh, label] of timesForDay(idx)) {
+    if (hh * 60 > nowMin) return { label, stage: `Day ${idx + 1} · ${label}`, due: zonedWallToUTC(nowP.y, nowP.m, nowP.d, hh, 0, iana) };
+  }
+  return null;
+}
+// What the card header shows: fresh arrival, a due slot, or the next one up.
+function mCallState(lead) {
+  if (!lead.setter_calls || !lead.setter_calls["mopt|arrival"]) {
+    return { kind: "fresh", key: "mopt|arrival", stage: "NEW OPT-IN · call now" };
+  }
+  if (mReached(lead, "mopt")) return { kind: "reached", stage: "✓ Reached" };
+  const due = mDueSlot(lead, lead.created_at, "mopt");
+  if (due) return { kind: "due", key: due.key, stage: due.stage, sast: due.sast };
+  const next = mNextSlot(lead, lead.created_at);
+  if (next) return { kind: "next", stage: `next: ${next.stage}`, due: next.due };
+  return { kind: "idle", stage: "no calls due today" };
+}
 const mFmt = (iso, tz, opts) => new Date(iso).toLocaleString("en-US", { timeZone: tz, ...opts });
 const mTzShort = (iso, tz) => {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "short" }).formatToParts(new Date(iso));
@@ -169,6 +233,13 @@ export default function B2CDialer() {
     await supabase.from("b2c_leads").update({ stage }).eq("id", lead.id);
     load();
   }
+  // Master leads keep their call ticks on b2c_master_leads.setter_calls.
+  async function recordMaster(lead, slotKey, outcome) {
+    const calls = { ...(lead.setter_calls || {}) };
+    if (calls[slotKey] === outcome) delete calls[slotKey]; else calls[slotKey] = outcome;
+    await supabase.from("b2c_master_leads").update({ setter_calls: calls }).eq("id", lead.id);
+    load();
+  }
 
   // build the pots — only leads DUE right now
   const optPot = [];
@@ -231,7 +302,8 @@ export default function B2CDialer() {
         <SectionBtn on={section === "optins"} onClick={() => setSection("optins")} label={`Opt-Ins (${optPot.length})`} />
         <SectionBtn on={section === "conf"} onClick={() => setSection("conf")} label={`Confirmations (${confPot.length})`} />
         <SectionBtn on={section === "prior"} onClick={() => setSection("prior")} label={`⏰ 30-Min Prior (${priorPot.length})`} tone={priorPot.length ? C.red : null} />
-        <SectionBtn on={section === "mopt"} onClick={() => setSection("mopt")} label={`Master Opt-Ins (${mLeads.filter((l) => !mBookings[l.id]).length})`} />
+        <SectionBtn on={section === "mopt"} onClick={() => setSection("mopt")}
+          label={`Master Opt-Ins (${mLeads.filter((l) => !mBookings[l.id] && ["fresh", "due"].includes(mCallState(l).kind)).length} due / ${mLeads.filter((l) => !mBookings[l.id]).length})`} />
         <SectionBtn on={section === "mbook"} onClick={() => setSection("mbook")} label={`Master Booked (${mLeads.filter((l) => mBookings[l.id]).length})`} />
       </div>
 
@@ -247,7 +319,12 @@ export default function B2CDialer() {
             ? priorPot.map(({ l, m }) => <PriorCard key={l.id} l={l} m={m} setStage={setStage} />)
             : <Empty>No appointments starting within 30 minutes.</Empty>)}
           {section === "mopt" && (mLeads.filter((l) => !mBookings[l.id]).length
-            ? mLeads.filter((l) => !mBookings[l.id]).map((l) => <MasterLeadCard key={l.id} l={l} onBooked={load} />)
+            ? [...mLeads.filter((l) => !mBookings[l.id])]
+                .sort((a, b) => {
+                  const rank = (l) => ({ fresh: 0, due: 1, next: 2, idle: 3, reached: 4 })[mCallState(l).kind];
+                  return rank(a) - rank(b);
+                })
+                .map((l) => <MasterLeadCard key={l.id} l={l} onBooked={load} onCall={recordMaster} />)
             : <Empty>No unbooked master opt-ins. 🎉</Empty>)}
           {section === "mbook" && (mLeads.filter((l) => mBookings[l.id]).length
             ? mLeads.filter((l) => mBookings[l.id]).map((l) => <MasterBookedCard key={l.id} l={l} bk={mBookings[l.id]} clientName={mClients[mBookings[l.id].client_id] || "—"} />)
@@ -330,7 +407,8 @@ function PriorCard({ l, m, setStage }) {
 // Opt-in card: expand -> day tabs -> PER-CLIENT availability for the lead's
 // state (only clients under their weekly cap), times in the lead's local tz.
 // One click on a time -> confirm popup -> books onto that client's calendar.
-function MasterLeadCard({ l, onBooked }) {
+function MasterLeadCard({ l, onBooked, onCall }) {
+  const call = mCallState(l);
   const [day, setDay] = useState(-1);       // -1 = not loaded yet
   const [detail, setDetail] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -385,8 +463,14 @@ function MasterLeadCard({ l, onBooked }) {
           <span style={{ fontFamily: "monospace", fontSize: 12, color: C.dim }}>{l.phone || "—"}</span>
           <span style={{ fontSize: 11, color: C.violet }}>{l.state}</span>
         </span>
-        <span style={{ fontSize: 11.5, color: C.faint }}>
-          {l.household_income ? `${l.household_income} · ` : ""}opted in {new Date(l.created_at).toLocaleDateString()}
+        <span style={{ textAlign: "right" }}>
+          <span style={{
+            fontSize: 12, fontWeight: 700,
+            color: call.kind === "fresh" ? C.green : call.kind === "due" ? C.amber : call.kind === "reached" ? C.green : C.faint,
+          }}>{call.stage}</span>
+          <span style={{ fontSize: 11, color: C.faint, marginLeft: 8 }}>
+            {call.kind === "due" ? `= ${call.sast} SAST` : `opted in ${new Date(l.created_at).toLocaleDateString()}`}
+          </span>
         </span>
       </summary>
       <div style={{ padding: "0 15px 13px", borderTop: `1px solid ${C.border}` }}>
@@ -395,6 +479,12 @@ function MasterLeadCard({ l, onBooked }) {
           <span style={{ color: C.dim }}>Income</span><span>{l.household_income || "—"}</span>
           <span style={{ color: C.dim }}>Local time</span><span>{mFmt(new Date().toISOString(), tz, { hour: "numeric", minute: "2-digit" })} {mTzShort(new Date().toISOString(), tz)}</span>
         </div>
+        {onCall && (call.kind === "fresh" || call.kind === "due") && (
+          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+            <button style={btn(C.green)} onClick={() => onCall(l, call.key, "picked_up")}>✓ Called — picked up</button>
+            <button style={btn(C.faint)} onClick={() => onCall(l, call.key, "no_pickup")}>☎ Called — no answer</button>
+          </div>
+        )}
         <div style={{ display: "flex", gap: 5, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
           {[0, 1, 2, 3, 4].map((i) => (
             <button key={i} onClick={() => loadDetail(i)} style={{
