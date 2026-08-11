@@ -22,99 +22,6 @@ const C = {
   accent: "#5b8def", green: "#3ecf8e", amber: "#e9b949", violet: "#a78bfa", red: "#f0616d",
 };
 
-// ---- MASTER ROUTER (state-based routing across all clients) ----
-// Booking goes through the agency-ops Netlify functions (shared engine with
-// the master landing page): eligibility, weekly limits, weighted assignment.
-const MASTER_API = "https://buildflowtracking.netlify.app/.netlify/functions";
-
-// Dominant timezone per state — slot times are shown in the LEAD's local time.
-const STATE_TZ = {
-  CT:"America/New_York", DE:"America/New_York", FL:"America/New_York", GA:"America/New_York",
-  IN:"America/New_York", KY:"America/New_York", ME:"America/New_York", MD:"America/New_York",
-  MA:"America/New_York", MI:"America/New_York", NH:"America/New_York", NJ:"America/New_York",
-  NY:"America/New_York", NC:"America/New_York", OH:"America/New_York", PA:"America/New_York",
-  RI:"America/New_York", SC:"America/New_York", VT:"America/New_York", VA:"America/New_York",
-  WV:"America/New_York", DC:"America/New_York",
-  AL:"America/Chicago", AR:"America/Chicago", IL:"America/Chicago", IA:"America/Chicago",
-  KS:"America/Chicago", LA:"America/Chicago", MN:"America/Chicago", MS:"America/Chicago",
-  MO:"America/Chicago", NE:"America/Chicago", ND:"America/Chicago", OK:"America/Chicago",
-  SD:"America/Chicago", TN:"America/Chicago", TX:"America/Chicago", WI:"America/Chicago",
-  AZ:"America/Phoenix", CO:"America/Denver", ID:"America/Denver", MT:"America/Denver",
-  NM:"America/Denver", UT:"America/Denver", WY:"America/Denver",
-  CA:"America/Los_Angeles", NV:"America/Los_Angeles", OR:"America/Los_Angeles", WA:"America/Los_Angeles",
-  AK:"America/Anchorage", HI:"Pacific/Honolulu",
-};
-const mLeadTz = (st) => STATE_TZ[st] || "America/New_York";
-
-// Master-lead call cadence — same rules as b2c-cron.js and the old pots.
-// Keys match the cron's keys exactly, so ticking a call here stops that
-// lead's Slack reminder (and vice versa).
-function mNowParts(iana) {
-  const f = new Intl.DateTimeFormat("en-US", { timeZone: iana, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-  const o = {};
-  for (const p of f.formatToParts(new Date())) if (p.type !== "literal") o[p.type] = p.value;
-  let hh = parseInt(o.hour, 10); if (hh === 24) hh = 0;
-  return { y: +o.year, m: +o.month, d: +o.day, hh, mm: +o.minute };
-}
-function mDateParts(iso, iana) {
-  const f = new Intl.DateTimeFormat("en-CA", { timeZone: iana, year: "numeric", month: "2-digit", day: "2-digit" });
-  const [y, m, d] = f.format(new Date(iso)).split("-").map(Number);
-  return { y, m, d };
-}
-const mDayKey = (p) => `${p.y}-${pad(p.m)}-${pad(p.d)}`;
-const mDayDiff = (a, b) => Math.round((Date.UTC(b.y, b.m - 1, b.d) - Date.UTC(a.y, a.m - 1, a.d)) / 86400e3);
-const mReached = (l, prefix) =>
-  Object.entries(l.setter_calls || {}).some(([k, v]) => v === "picked_up" && k.startsWith(prefix));
-
-// The freshest DUE, untouched slot today — or null.
-function mDueSlot(lead, baseIso, prefix) {
-  const iana = mLeadTz(lead.state);
-  if (!baseIso) return null;
-  const nowP = mNowParts(iana);
-  const idx = mDayDiff(mDateParts(baseIso, iana), nowP);
-  if (idx < 0) return null;
-  const calls = lead.setter_calls || {};
-  const nowMin = nowP.hh * 60 + nowP.mm;
-  let current = null;
-  for (const [hh, label] of timesForDay(idx)) {
-    const key = `${prefix}|${mDayKey(nowP)}|${pad(hh)}00`;
-    if (hh * 60 > nowMin || calls[key]) continue;
-    const dueUTC = zonedWallToUTC(nowP.y, nowP.m, nowP.d, hh, 0, iana);
-    current = { key, label, stage: `Day ${idx + 1} · ${label} call`, sast: sastTime(dueUTC), due: dueUTC };
-  }
-  return current;
-}
-// The next slot still ahead today (for "next: …" on non-due cards).
-function mNextSlot(lead, baseIso) {
-  const iana = mLeadTz(lead.state);
-  if (!baseIso) return null;
-  const nowP = mNowParts(iana);
-  const idx = mDayDiff(mDateParts(baseIso, iana), nowP);
-  if (idx < 0) return null;
-  const nowMin = nowP.hh * 60 + nowP.mm;
-  for (const [hh, label] of timesForDay(idx)) {
-    if (hh * 60 > nowMin) return { label, stage: `Day ${idx + 1} · ${label}`, due: zonedWallToUTC(nowP.y, nowP.m, nowP.d, hh, 0, iana) };
-  }
-  return null;
-}
-// What the card header shows: fresh arrival, a due slot, or the next one up.
-function mCallState(lead) {
-  if (!lead.setter_calls || !lead.setter_calls["mopt|arrival"]) {
-    return { kind: "fresh", key: "mopt|arrival", stage: "NEW OPT-IN · call now" };
-  }
-  if (mReached(lead, "mopt")) return { kind: "reached", stage: "✓ Reached" };
-  const due = mDueSlot(lead, lead.created_at, "mopt");
-  if (due) return { kind: "due", key: due.key, stage: due.stage, sast: due.sast };
-  const next = mNextSlot(lead, lead.created_at);
-  if (next) return { kind: "next", stage: `next: ${next.stage}`, due: next.due };
-  return { kind: "idle", stage: "no calls due today" };
-}
-const mFmt = (iso, tz, opts) => new Date(iso).toLocaleString("en-US", { timeZone: tz, ...opts });
-const mTzShort = (iso, tz) => {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "short" }).formatToParts(new Date(iso));
-  return (parts.find((p) => p.type === "timeZoneName") || {}).value || "";
-};
-
 const TZ_ORDER = ["ET", "CT", "MT", "PT"];
 const TZ_IANA = { ET: "America/New_York", CT: "America/Chicago", MT: "America/Denver", PT: "America/Los_Angeles" };
 const SAST = "Africa/Johannesburg";
@@ -192,9 +99,6 @@ const ghlLink = (l) => (l.ghl_location_id && l.ghl_contact_id)
 
 export default function B2CDialer() {
   const [leads, setLeads] = useState([]);
-  const [mLeads, setMLeads] = useState([]);           // b2c_master_leads
-  const [mBookings, setMBookings] = useState({});     // lead_id -> latest booking
-  const [mClients, setMClients] = useState({});       // client_id -> name
   const [loading, setLoading] = useState(true);
   const [section, setSection] = useState("optins");
   const [client, setClient] = useState("All");
@@ -202,20 +106,8 @@ export default function B2CDialer() {
 
   async function load() {
     setLoading(true);
-    const [{ data }, ml, mb, mc] = await Promise.all([
-      supabase.from("b2c_leads").select("*").in("stage", ["Opt-In", "Booked", "No Show"]),
-      supabase.from("b2c_master_leads").select("*").order("created_at", { ascending: false }).limit(100),
-      supabase.from("b2c_master_bookings").select("lead_id, client_id, slot_start, booked_by").order("booked_at", { ascending: false }).limit(400),
-      supabase.from("b2c_clients").select("id, name"),
-    ]);
+    const { data } = await supabase.from("b2c_leads").select("*").in("stage", ["Opt-In", "Booked", "No Show"]);
     setLeads(data || []);
-    setMLeads(ml.data || []);
-    const bm = {};
-    (mb.data || []).forEach((r) => { if (!bm[r.lead_id]) bm[r.lead_id] = r; });
-    setMBookings(bm);
-    const cm = {};
-    (mc.data || []).forEach((c) => { cm[c.id] = c.name; });
-    setMClients(cm);
     setLoading(false);
   }
   useEffect(() => { load(); }, []);
@@ -233,20 +125,25 @@ export default function B2CDialer() {
     await supabase.from("b2c_leads").update({ stage }).eq("id", lead.id);
     load();
   }
-  // Master leads keep their call ticks on b2c_master_leads.setter_calls.
-  async function recordMaster(lead, slotKey, outcome) {
-    const calls = { ...(lead.setter_calls || {}) };
-    if (calls[slotKey] === outcome) delete calls[slotKey]; else calls[slotKey] = outcome;
-    await supabase.from("b2c_master_leads").update({ setter_calls: calls }).eq("id", lead.id);
-    load();
-  }
 
   // build the pots — only leads DUE right now
   const optPot = [];
   for (const l of visible) {
     if (l.stage === "Opt-In" && !reached(l, "b2copt")) {
-      const s = dueSlot(l, l.opt_in_at, "b2copt");
-      if (s) optPot.push({ l, s });
+      // Brand-new opt-in: show a "call now" card immediately on arrival,
+      // regardless of the clock, until it's been called once.
+      const calls = l.setter_calls || {};
+      if (!calls["b2copt|arrival"]) {
+        optPot.push({ l, s: { key: "b2copt|arrival", label: "arrival", stage: "NEW OPT-IN · call now", sast: sastTime(new Date()), fresh: true } });
+      } else {
+        const s = dueSlot(l, l.opt_in_at, "b2copt");
+        if (s) optPot.push({ l, s });
+        else if (!TZ_ORDER.includes(l.timezone)) {
+          // No usable timezone -> can't schedule slots. Keep it visible rather
+          // than silently dropping it, so it never gets lost.
+          optPot.push({ l, s: { key: `b2copt|notz|${dayKey(nowPartsIn(SAST))}`, label: "no timezone", stage: "⚠ No timezone — call when you can", sast: sastTime(new Date()), fresh: true } });
+        }
+      }
     } else if (l.stage === "No Show" && !reached(l, "b2cns")) {
       const iana = TZ_IANA[l.timezone];
       if (iana) {
@@ -264,6 +161,11 @@ export default function B2CDialer() {
     if (l.stage !== "Booked" || reached(l, "b2cconf")) continue;
     const m = minsToAppt(l);
     if (m == null || m <= 0) continue;
+    const calls = l.setter_calls || {};
+    if (!calls["b2cconf|arrival"]) {
+      confPot.push({ l, s: { key: "b2cconf|arrival", label: "arrival", stage: "NEW BOOKING · confirm now", sast: sastTime(new Date()), fresh: true } });
+      continue;
+    }
     const s = dueSlot(l, l.booked_at || l.opt_in_at, "b2cconf");
     if (s) confPot.push({ l, s });
   }
@@ -302,9 +204,6 @@ export default function B2CDialer() {
         <SectionBtn on={section === "optins"} onClick={() => setSection("optins")} label={`Opt-Ins (${optPot.length})`} />
         <SectionBtn on={section === "conf"} onClick={() => setSection("conf")} label={`Confirmations (${confPot.length})`} />
         <SectionBtn on={section === "prior"} onClick={() => setSection("prior")} label={`⏰ 30-Min Prior (${priorPot.length})`} tone={priorPot.length ? C.red : null} />
-        <SectionBtn on={section === "mopt"} onClick={() => setSection("mopt")}
-          label={`Master Opt-Ins (${mLeads.filter((l) => !mBookings[l.id] && ["fresh", "due"].includes(mCallState(l).kind)).length} due / ${mLeads.filter((l) => !mBookings[l.id]).length})`} />
-        <SectionBtn on={section === "mbook"} onClick={() => setSection("mbook")} label={`Master Booked (${mLeads.filter((l) => mBookings[l.id]).length})`} />
       </div>
 
       {loading ? <p style={{ color: C.dim, marginTop: 20 }}>Loading…</p> : (
@@ -318,17 +217,6 @@ export default function B2CDialer() {
           {section === "prior" && (priorPot.length
             ? priorPot.map(({ l, m }) => <PriorCard key={l.id} l={l} m={m} setStage={setStage} />)
             : <Empty>No appointments starting within 30 minutes.</Empty>)}
-          {section === "mopt" && (mLeads.filter((l) => !mBookings[l.id]).length
-            ? [...mLeads.filter((l) => !mBookings[l.id])]
-                .sort((a, b) => {
-                  const rank = (l) => ({ fresh: 0, due: 1, next: 2, idle: 3, reached: 4 })[mCallState(l).kind];
-                  return rank(a) - rank(b);
-                })
-                .map((l) => <MasterLeadCard key={l.id} l={l} onBooked={load} onCall={recordMaster} />)
-            : <Empty>No unbooked master opt-ins. 🎉</Empty>)}
-          {section === "mbook" && (mLeads.filter((l) => mBookings[l.id]).length
-            ? mLeads.filter((l) => mBookings[l.id]).map((l) => <MasterBookedCard key={l.id} l={l} bk={mBookings[l.id]} clientName={mClients[mBookings[l.id].client_id] || "—"} />)
-            : <Empty>No master bookings yet.</Empty>)}
         </div>
       )}
     </div>
@@ -338,7 +226,7 @@ export default function B2CDialer() {
 function PotCard({ l, s, record, conf, setStage }) {
   const ghl = ghlLink(l);
   return (
-    <details style={{ background: C.panel, border: `1px solid ${C.amber}44`, borderRadius: 12 }}>
+    <details style={{ background: C.panel, border: `1px solid ${s.fresh ? C.green + "88" : C.amber + "44"}`, borderRadius: 12 }}>
       <summary style={{ listStyle: "none", cursor: "pointer", padding: "12px 15px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
           <span style={{ fontWeight: 700, fontSize: 14 }}>{l.full_name || "—"}</span>
@@ -346,8 +234,8 @@ function PotCard({ l, s, record, conf, setStage }) {
           <span style={{ fontSize: 11, color: C.violet }}>{l.timezone || "?"}</span>
         </span>
         <span style={{ textAlign: "right" }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: C.amber }}>{s.stage}</span>
-          <span style={{ fontSize: 11, color: C.faint, marginLeft: 8 }}>= {s.sast} SAST</span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: s.fresh ? C.green : C.amber }}>{s.stage}</span>
+          <span style={{ fontSize: 11, color: C.faint, marginLeft: 8 }}>{s.fresh ? "just now" : `= ${s.sast} SAST`}</span>
         </span>
       </summary>
       <div style={{ padding: "0 15px 13px", borderTop: `1px solid ${C.border}` }}>
@@ -398,149 +286,6 @@ function PriorCard({ l, m, setStage }) {
       <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
         <button style={btn(C.accent)} onClick={() => setStage(l, "Show")}>Show</button>
         <button style={btn(C.red)} onClick={() => setStage(l, "No Show")}>No Show</button>
-      </div>
-    </div>
-  );
-}
-
-/* ---- MASTER ROUTER cards ---- */
-// Opt-in card: expand -> day tabs -> PER-CLIENT availability for the lead's
-// state (only clients under their weekly cap), times in the lead's local tz.
-// One click on a time -> confirm popup -> books onto that client's calendar.
-function MasterLeadCard({ l, onBooked, onCall }) {
-  const call = mCallState(l);
-  const [day, setDay] = useState(-1);       // -1 = not loaded yet
-  const [detail, setDetail] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
-  const tz = mLeadTz(l.state);
-
-  const dayDate = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return d; };
-
-  async function loadDetail(offset) {
-    setDay(offset); setDetail(null); setMsg("");
-    const target = dayDate(offset); target.setHours(0, 0, 0, 0);
-    const end = new Date(target); end.setHours(23, 59, 59, 999);
-    try {
-      const r = await fetch(`${MASTER_API}/master-slots`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ state: l.state, startMs: target.getTime(), endMs: end.getTime(), timezone: tz, detail: true }),
-      });
-      const data = await r.json();
-      if (data.no_coverage) { setMsg("No coverage / all clients at their weekly limit for this state."); setDetail([]); return; }
-      const now = Date.now();
-      setDetail((data.clients || []).map((c) => ({ ...c, slots: (c.slots || []).filter((iso) => new Date(iso).getTime() > now) })));
-    } catch (e) { setMsg("Failed to load availability."); setDetail([]); }
-  }
-
-  async function book(clientEntry, iso) {
-    const when = mFmt(iso, tz, { weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-    const ok = window.confirm(
-      `Book ${l.full_name} with ${clientEntry.name}?\n\n${when} ${mTzShort(iso, tz)} (lead's local time)\n\nClick OK to confirm the booking.`
-    );
-    if (!ok) return;
-    setBusy(true); setMsg("");
-    try {
-      const r = await fetch(`${MASTER_API}/master-book`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lead_id: l.id, slot: iso, timezone: tz, booked_by: "setter", client_id: clientEntry.client_id }),
-      });
-      const data = await r.json();
-      if (data.booked) { setMsg(`Booked → ${data.client.name} ✓`); setTimeout(onBooked, 900); }
-      else if (data.error === "client_unavailable") { setMsg("That client just lost the slot or hit their limit — refreshing."); loadDetail(day); }
-      else if (data.error === "slot_taken") { setMsg("Slot just taken — refreshing."); loadDetail(day); }
-      else setMsg(data.error || "Booking failed.");
-    } catch (e) { setMsg("Booking failed."); }
-    setBusy(false);
-  }
-
-  return (
-    <details style={{ background: C.panel, border: `1px solid ${C.accent}44`, borderRadius: 12 }}
-      onToggle={(e) => { if (e.target.open && day === -1) loadDetail(0); }}>
-      <summary style={{ listStyle: "none", cursor: "pointer", padding: "12px 15px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-          <span style={{ fontWeight: 700, fontSize: 14 }}>{l.full_name || "—"}</span>
-          <span style={{ fontFamily: "monospace", fontSize: 12, color: C.dim }}>{l.phone || "—"}</span>
-          <span style={{ fontSize: 11, color: C.violet }}>{l.state}</span>
-        </span>
-        <span style={{ textAlign: "right" }}>
-          <span style={{
-            fontSize: 12, fontWeight: 700,
-            color: call.kind === "fresh" ? C.green : call.kind === "due" ? C.amber : call.kind === "reached" ? C.green : C.faint,
-          }}>{call.stage}</span>
-          <span style={{ fontSize: 11, color: C.faint, marginLeft: 8 }}>
-            {call.kind === "due" ? `= ${call.sast} SAST` : `opted in ${new Date(l.created_at).toLocaleDateString()}`}
-          </span>
-        </span>
-      </summary>
-      <div style={{ padding: "0 15px 13px", borderTop: `1px solid ${C.border}` }}>
-        <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "5px 14px", fontSize: 12.5, marginTop: 10 }}>
-          <span style={{ color: C.dim }}>Email</span><span>{l.email || "—"}</span>
-          <span style={{ color: C.dim }}>Income</span><span>{l.household_income || "—"}</span>
-          <span style={{ color: C.dim }}>Local time</span><span>{mFmt(new Date().toISOString(), tz, { hour: "numeric", minute: "2-digit" })} {mTzShort(new Date().toISOString(), tz)}</span>
-        </div>
-        {onCall && (call.kind === "fresh" || call.kind === "due") && (
-          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-            <button style={btn(C.green)} onClick={() => onCall(l, call.key, "picked_up")}>✓ Called — picked up</button>
-            <button style={btn(C.faint)} onClick={() => onCall(l, call.key, "no_pickup")}>☎ Called — no answer</button>
-          </div>
-        )}
-        <div style={{ display: "flex", gap: 5, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
-          {[0, 1, 2, 3, 4].map((i) => (
-            <button key={i} onClick={() => loadDetail(i)} style={{
-              ...btn(day === i ? C.accent : C.faint),
-              background: day === i ? C.accent : "transparent", color: day === i ? "#fff" : C.dim,
-            }}>{dayDate(i).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</button>
-          ))}
-          <span style={{ fontSize: 11, color: C.faint, marginLeft: 6 }}>times in {l.state} local</span>
-        </div>
-        {detail === null && day !== -1 && <p style={{ color: C.dim, fontSize: 12, marginTop: 10 }}>Loading availability…</p>}
-        {detail !== null && (
-          <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-            {detail.length === 0 && !msg && <span style={{ color: C.dim, fontSize: 12 }}>No eligible clients.</span>}
-            {detail.map((c) => (
-              <div key={c.client_id} style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 6 }}>
-                  <strong>{c.name}</strong>
-                  <span style={{ color: c.booked >= c.weekly_limit ? C.red : C.dim }}>{c.booked} / {c.weekly_limit} this week</span>
-                </div>
-                {c.slots.length === 0 ? (
-                  <span style={{ color: C.faint, fontSize: 12 }}>No times this day.</span>
-                ) : (
-                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                    {c.slots.map((iso) => (
-                      <button key={iso} disabled={busy} style={btn(C.green)} onClick={() => book(c, iso)}>
-                        {mFmt(iso, tz, { hour: "numeric", minute: "2-digit" })}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-        {msg && <p style={{ color: msg.includes("✓") ? C.green : C.red, fontSize: 12, marginTop: 8 }}>{msg}</p>}
-      </div>
-    </details>
-  );
-}
-
-function MasterBookedCard({ l, bk, clientName }) {
-  const tz = mLeadTz(l.state);
-  return (
-    <div style={{ background: C.panel, border: `1px solid ${C.green}44`, borderRadius: 12, padding: "12px 15px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontWeight: 700, fontSize: 14 }}>{l.full_name || "—"}</span>
-          <span style={{ fontFamily: "monospace", fontSize: 12, color: C.dim }}>{l.phone || "—"}</span>
-          <span style={{ fontSize: 11, color: C.violet }}>{l.state}</span>
-        </span>
-        <span style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 12.5, color: C.green, fontWeight: 700 }}>{clientName}</div>
-          <div style={{ fontSize: 11.5, color: C.dim }}>
-            {mFmt(bk.slot_start, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} {mTzShort(bk.slot_start, tz)} · by {bk.booked_by}
-          </div>
-        </span>
       </div>
     </div>
   );
