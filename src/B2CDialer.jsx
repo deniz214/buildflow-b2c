@@ -209,8 +209,8 @@ export default function B2CDialer() {
   async function load() {
     setLoading(true);
     const [{ data }, ml, mb, mc] = await Promise.all([
-      supabase.from("b2c_leads").select("*").order("opt_in_at", { ascending: false, nullsFirst: false }).limit(300),
-      supabase.from("b2c_master_leads").select("*").order("created_at", { ascending: false }).limit(100),
+      supabase.from("b2c_leads").select("*").is("archived_at", null).order("opt_in_at", { ascending: false, nullsFirst: false }).limit(300),
+      supabase.from("b2c_master_leads").select("*").is("archived_at", null).order("created_at", { ascending: false }).limit(100),
       supabase.from("b2c_master_bookings").select("id, lead_id, client_id, slot_start, booked_by, booked_at, status").order("booked_at", { ascending: false }).limit(400),
       supabase.from("b2c_clients").select("id, name"),
     ]);
