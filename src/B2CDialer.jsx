@@ -311,6 +311,13 @@ export default function B2CDialer() {
     if (!bk || ["cancelled", "showed", "no_show"].includes(bk.status || "")) continue;
     if (new Date(bk.slot_start).getTime() <= Date.now()) continue;
     if (mReached(l, "mconf")) continue;
+    // A fresh booking surfaces IMMEDIATELY (same as a fresh opt-in) instead
+    // of waiting for the next 9/1/5 cadence slot. Ticking this arrival call
+    // (picked up or not) hands the lead over to the normal cadence below.
+    if (!(l.setter_calls || {})["mconf|arrival"]) {
+      mConf.push({ l, bk, s: { key: "mconf|arrival", stage: "NEW BOOKING · confirm now", sast: sastTime(new Date()) } });
+      continue;
+    }
     const due = mDueSlot(l, bk.booked_at || l.created_at, "mconf");
     if (due) mConf.push({ l, bk, s: due });
   }
