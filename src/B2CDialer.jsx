@@ -194,6 +194,15 @@ function minsToAppt(lead) {
 const fmtAppt = (l) => l.appt_at ? String(l.appt_at).slice(0, 16).replace("T", " ") + ` ${l.timezone || ""}` : "—";
 const ghlLink = (l) => (l.ghl_location_id && l.ghl_contact_id)
   ? `https://app.gohighlevel.com/v2/location/${l.ghl_location_id}/contacts/detail/${l.ghl_contact_id}` : null;
+// Master leads all live in the one Bindly location; master-optin stores the
+// contact id on the lead row (b2c_master_leads.ghl_contact_id).
+const M_GHL_LOCATION = "w0QO7CqoWR6sxJImHI2m";
+const mGhlLink = (l) => l.ghl_contact_id
+  ? `https://app.gohighlevel.com/v2/location/${M_GHL_LOCATION}/contacts/detail/${l.ghl_contact_id}` : null;
+const mIncome = (l) => (l.answers && l.answers.labels && l.answers.labels.income) || l.household_income || "—";
+const GhlRow = ({ l }) => { const u = mGhlLink(l); return u
+  ? <><span style={{ color: C.dim }}>GHL</span><span><a href={u} target="_blank" rel="noreferrer" style={{ color: C.accent, fontWeight: 700 }}>Open contact ↗</a></span></>
+  : null; };
 
 export default function B2CDialer() {
   const [leads, setLeads] = useState([]);
@@ -552,7 +561,8 @@ function MasterLeadCard({ l, onBooked, onCall, forceCall }) {
       <div style={{ padding: "0 15px 13px", borderTop: `1px solid ${C.border}` }}>
         <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "5px 14px", fontSize: 12.5, marginTop: 10 }}>
           <span style={{ color: C.dim }}>Email</span><span>{l.email || "—"}</span>
-          <span style={{ color: C.dim }}>Income</span><span>{l.household_income || "—"}</span>
+          <span style={{ color: C.dim }}>Income</span><span>{mIncome(l)}</span>
+          <GhlRow l={l} />
           <span style={{ color: C.dim }}>Local time</span><span>{mFmt(new Date().toISOString(), tz, { hour: "numeric", minute: "2-digit" })} {mTzShort(new Date().toISOString(), tz)}</span>
         </div>
         {onCall && (call.kind === "fresh" || call.kind === "due") && (
@@ -622,6 +632,7 @@ function MasterConfCard({ l, bk, s, clientName, onCall, onStatus }) {
         <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "5px 14px", fontSize: 12.5, marginTop: 10 }}>
           <span style={{ color: C.dim }}>Client</span><span style={{ color: C.green, fontWeight: 600 }}>{clientName}</span>
           <span style={{ color: C.dim }}>Email</span><span>{l.email || "—"}</span>
+          <GhlRow l={l} />
           <span style={{ color: C.dim }}>Appt</span>
           <span>{mFmt(bk.slot_start, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} {mTzShort(bk.slot_start, tz)} <span style={{ color: C.faint }}>(lead local) · by {bk.booked_by}</span></span>
         </div>
@@ -651,9 +662,10 @@ function MasterPriorCard({ l, bk, m, clientName, onStatus }) {
           <div style={{ fontSize: 11.5, color: C.dim }}>{mFmt(bk.slot_start, tz, { weekday: "short", hour: "numeric", minute: "2-digit" })} {mTzShort(bk.slot_start, tz)}</div>
         </div>
       </div>
-      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+      <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
         <button style={btn(C.accent)} onClick={() => onStatus(bk, "showed")}>Show</button>
         <button style={btn(C.red)} onClick={() => onStatus(bk, "no_show")}>No Show</button>
+        {mGhlLink(l) && <a href={mGhlLink(l)} target="_blank" rel="noreferrer" style={{ color: C.accent, fontSize: 12, fontWeight: 700, marginLeft: 4 }}>Open in GHL ↗</a>}
       </div>
     </div>
   );
